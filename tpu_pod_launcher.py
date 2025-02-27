@@ -79,14 +79,29 @@ class TPUPodClient:
     def list_ips(
         self,
         tpu_name: str,
-        add_user: bool=True,
+        add_user: bool = True,
         **kwargs,
     ) -> List[str]:
-        command = f"gcloud alpha compute tpus tpu-vm describe \"{tpu_name}\" --zone {self.tpu_zone} --project {self.tpu_project} | grep -oP 'externalIp: \K(.+)$'"
-        ips = run_command(command, **kwargs).strip().split('\n')
-        if add_user and self.user is not None:
-            ips = [f'{self.user}@{ip}' for ip in ips]
-        return ips
+        command = (
+            f"gcloud alpha compute tpus tpu-vm describe \"{tpu_name}\" "
+            f"--zone {self.tpu_zone} "
+            f"--project {self.tpu_project} "
+            f"--format='get(networkEndpoints[].accessConfig.externalIp)'"
+        )
+        try:
+            ips_output = run_command(command, **kwargs).strip()
+            if not ips_output:
+                return []
+            ips = ips_output.split(';')
+            if add_user and self.user is not None:
+                ips = [f'{self.user}@{ip}' for ip in ips]
+            return ips
+        except subprocess.CalledProcessError as e:
+            if "NOT_FOUND" in e.output:
+                return []
+            else:
+                raise e  # Re-raise exception for unexpected errors
+
 
     def delete(self, tpu_name: str, **kwargs) -> str:
         command = f"gcloud alpha compute tpus tpu-vm delete \"{tpu_name}\" --zone {self.tpu_zone} --project {self.tpu_project} --quiet"
@@ -105,7 +120,42 @@ class TPUPodClient:
     ) -> str:
         command = f"gcloud alpha compute tpus tpu-vm create \"{tpu_name}\" --accelerator-type=\"{accelerator_type}\" --version=\"{software_version}\" --zone {self.tpu_zone} --project {self.tpu_project}"
         return run_command(command, **kwargs)
+
+    def create_spot(
+        self,
+        tpu_name: str,
+        accelerator_type: str,  # e.g., v3-32
+        software_version: str='tpu-vm-base',
+        **kwargs,
+    ) -> str:
+        command = (
+            f"gcloud alpha compute tpus tpu-vm create \"{tpu_name}\" "
+            f"--accelerator-type=\"{accelerator_type}\" "
+            f"--version=\"{software_version}\" "
+            f"--zone {self.tpu_zone} "
+            f"--project {self.tpu_project} "
+            f"--preemptible"
+        )
+        return run_command(command, **kwargs)
     
+    def get_tpu_status(self, tpu_name: str) -> Optional[str]:
+        command = (
+            f"gcloud alpha compute tpus tpu-vm describe \"{tpu_name}\" "
+            f"--zone {self.tpu_zone} "
+            f"--project {self.tpu_project} "
+            f"--format='get(state)'"
+        )
+        try:
+            status = run_command(command).strip()
+            return status
+        except subprocess.CalledProcessError as e:
+            # If the TPU does not exist or an error occurs
+            if "NOT_FOUND" in e.output:
+                return None
+            else:
+                raise e  # Re-raise exception for unexpected errors
+
+        
     def copy(
         self,
         tpu_name: str,
@@ -179,6 +229,7 @@ class TPUPodProject:
         working_dir: str,
         copy_excludes: Optional[List[str]]=None,
         kill_commands: Optional[List[str]]=None,
+        setup_fn: Optional[Callable[['TPUPodProject'], None]] = None,
     ):
         self.client = client
         self.tpu_name = tpu_name
@@ -186,7 +237,8 @@ class TPUPodProject:
         self.working_dir = working_dir
         self.copy_excludes = copy_excludes
         self.kill_commands = kill_commands
-    
+        self.setup_fn = setup_fn  # Store the setup function
+        
     def ssh(
         self,
         command: str,
@@ -246,10 +298,14 @@ class TPUPodProject:
     
     def check(
         self,
-        window_name: str='launch',
-        silent: bool=False,
+        window_name: str = 'launch',
+        silent: bool = False,
         **kwargs,
     ) -> Dict[str, str]:
+        hosts = self.client.list_ips(self.tpu_name)
+        if not hosts:
+            print(f"No running TPUs found for {self.tpu_name}.")
+            return {}
         command = f"tmux capture-pane -pt {window_name}"
         results = self.ssh(command, **kwargs)
         if not silent:
@@ -258,7 +314,31 @@ class TPUPodProject:
                 print(result)
                 print(f"============== End of host: {host} ==============")
         return results
-    
+
+
+    def check_long(
+        self,
+        window_name: str = 'launch',
+        silent: bool = False,
+        **kwargs,
+    ) -> Dict[str, str]:
+        hosts = self.client.list_ips(self.tpu_name)
+        if not hosts:
+            print(f"No running TPUs found for {self.tpu_name}.")
+            return {}
+        
+        # Updated tmux command to capture entire pane history
+        command = f"tmux capture-pane -pt {window_name} -S -"
+        
+        results = self.ssh(command, **kwargs)
+        if not silent:
+            for host, result in results.items():
+                print(f"============== Checking host: {host} ==============")
+                print(result)
+                print(f"============== End of host: {host} ==============")
+        return results
+
+
     def stop(
         self,
         window_name: str='launch',
@@ -294,7 +374,6 @@ def create_cli(
     else:
         config = dict()
     project_name = config.get('project_name', None)
-
     def set_project(name: str):
         if launch_config_path is None:
             raise ValueError("Cannot set project name without launch_config_path set.")
@@ -356,6 +435,7 @@ def create_cli(
         
         commands = dict(
             check=project.check,
+            check_long=project.check_long,
             stop=lambda: project.stop(verbose=verbose),
             check_forever=check_forever,
             launch=launch,
@@ -373,5 +453,5 @@ def create_cli(
             commands[mode](*settings)
         else:
             raise ValueError(f"Unknown mode: {mode}")
-    
+        
     tyro.cli(cli_main)
