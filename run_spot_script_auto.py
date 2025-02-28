@@ -89,35 +89,49 @@ def main():
     while True:
         try:
             # Collect data from both zones
-            cmd_eu = "gcloud compute tpus tpu-vm list --zone=europe-west4-a --format=json"
+            cmd_eu_a = "gcloud compute tpus tpu-vm list --zone=europe-west4-a --format=json"
+            cmd_eu_b = "gcloud compute tpus tpu-vm list --zone=europe-west4-b --format=json"
             cmd_us = "gcloud compute tpus tpu-vm list --zone=us-central2-b --format=json"
-            
-            result1 = subprocess.run(cmd_eu, shell=True, capture_output=True, text=True)
+
+            result1 = subprocess.run(cmd_eu_a, shell=True, capture_output=True, text=True)
             result2 = subprocess.run(cmd_us, shell=True, capture_output=True, text=True)
+            result3 = subprocess.run(cmd_eu_b, shell=True, capture_output=True, text=True)
             
             tpu_data = []
             if result1.stdout:
                 tpu_data.extend(json.loads(result1.stdout))
             if result2.stdout:
                 tpu_data.extend(json.loads(result2.stdout))
+            if result3.stdout:
+                tpu_data.extend(json.loads(result3.stdout))
             
             # Filter for v3spot named TPUs across both zones
             v3spot_data = [
                 vm for vm in tpu_data if
                 vm.get('name', '').startswith('projects/prm-research/locations/europe-west4-a/nodes/v3spot')
-                or vm.get('name', '').startswith('projects/prm-research/locations/us-central2-b/nodes/v3spot')
             ]
-            existing_tpus = set(vm['name'].split('/')[-1] for vm in v3spot_data)
+            
+            v4spot_data = [
+                vm for vm in tpu_data if
+                vm.get('name', '').startswith('projects/prm-research/locations/us-central2-b/nodes/v4spot')
+            ]
+            
+            v5spot_data = [
+                vm for vm in tpu_data if
+                vm.get('name', '').startswith('projects/prm-research/locations/europe-west4-b/nodes/v5spot')
+            ]
+            
+            existing_tpus = set(vm['name'].split('/')[-1] for vm in v3spot_data + v4spot_data + v5spot_data)
             
             # Build lists for parallel tasks:
             # 1) Non-ready => must recreate
             # 2) Missing => must create
             recreate_list = []
             create_list = []
-            
-            for vm in v3spot_data:
+            full_data = v3spot_data + v4spot_data + v5spot_data
+            for vm in full_data:
                 name = vm['name'].split('/')[-1]
-                if vm['state'] != 'READY':
+                if vm['state'] != 'READY' and name in script_mapping:
                     recreate_list.append(name)
 
             for project_name in script_mapping.keys():
@@ -126,7 +140,7 @@ def main():
             
             # Run each group in parallel. Each project runs create_setup_and_launch or recreate in its own thread.
             # Adjust max_workers as needed for your environment.
-            with ThreadPoolExecutor(max_workers=12) as executor:
+            with ThreadPoolExecutor(max_workers=32) as executor:
                 futures = []
                 # Re-create any that are not READY
                 for name in recreate_list:
@@ -142,16 +156,17 @@ def main():
                     _ = fut.result()
             
             # Print a summary
-            print("\n=== v3spot Instances Status ===")
-            for vm in v3spot_data:
+            print("\n=== TPU Instance Status ===")
+            for vm in full_data:
                 name = vm['name'].split('/')[-1]
-                state = vm['state']
-                created = datetime.strptime(vm['createTime'].split('.')[0], '%Y-%m-%dT%H:%M:%S')
-                print(f"TPU {name}:")
-                print(f"  State: {state}")
-                print(f"  Created: {created}")
-                print("---")
-            print(f"\nTotal v3spot instances: {len(v3spot_data)}\n")
+                if name in script_mapping:
+                    state = vm['state']
+                    created = datetime.strptime(vm['createTime'].split('.')[0], '%Y-%m-%dT%H:%M:%S')
+                    print(f"TPU {name}:")
+                    print(f"  State: {state}")
+                    print(f"  Created: {created}")
+                    print("---")
+            print(f"\nTotal instances: {len(v3spot_data)}\n")
             
             time.sleep(600)
         
