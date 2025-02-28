@@ -4,7 +4,7 @@ conda activate python-for-my-training-repo
 # generally everything set up here is useful to have:
 
 # path to gcloud token that was copied to the pod
-export GCLOUD_TOKEN_PATH='/home/mark/.config/gcloud/mark-perms.json'
+export GCLOUD_TOKEN_PATH='/home/mark/.config/gcloud/{your-key}.json'
 # your huggingface token (in this exact format, no quotes)
 export HF_TOKEN=my_hf_token
 # your gcloud project name
