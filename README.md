@@ -40,8 +40,38 @@ Then you should run
 ```
 python -m pip install -e .
 ```
-Then modify launch.py so it works for you.
+Then modify launch.py so it works for you (last part).
 
+### Modifying launch.py
+
+Fill in the arguments in here
+```
+def create_project(tpu_name: str, zone: str) -> TPUPodProject:
+    return TPUPodProject(
+        client=TPUPodClient(
+            tpu_project='my-project',
+            tpu_zone=zone,
+            user='my-username', 
+            key_path='/home/mark/my-ssh-key', # e.g. '/home/mark/.ssh/id_rsa',
+        ),
+        tpu_name=tpu_name,
+        # fill in your own dirs
+        copy_dirs=[('/home/mark/my-training-repo', '~/my-training-repo'), ('/home/mark/maybe-another-repo', '~/maybe-another-repo')],
+        working_dir='~/my-training-repo',
+        copy_excludes=['.git', '__pycache__'],
+        kill_commands=['pkill -9 python'],
+        setup_fn=setup
+    )
+```
+And fill in the TPUs you're working with (or will work with) here. Put their region in too:
+```
+    available_tpus = [
+        ('some-v3-pod-in-europe', 'europe-west4-a'),
+        ('some-other-v3-pod-in-europe', 'europe-west4-a'),
+        ('some-v4-pod-in-us', 'us-central2-b'), 
+        ('some-other-v4-pod-in-us', 'us-central2-b'),
+    ]
+```
 
 ## Useful info
 
