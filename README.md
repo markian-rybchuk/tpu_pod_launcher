@@ -85,7 +85,7 @@ If you want this to work properly, it should be done on a machine that is always
 
 ### The workaround
 
-Create an small on-demand pod in any region, like a v2-8 or v3-8. I believe anyone in TRC can make one in us-central1-f for free. Then you can ssh into the host of that pod (its first external IP address) and start the installation process. The only caveat to this workaround is that on-demand pods go down from time to time (once every 1-2 months), which will stop the script. So always have your code backed up somewhere else.
+Use on of your existing (preferably) small on-demand pod in any region. Then you can ssh into the host of that pod (its first external IP address) and start the installation process. The only caveat to this workaround is that on-demand pods go down from time to time (once every 1-2 months), which will stop the script. Obviously, try to use the pod for something else at the same time. So always have your code backed up somewhere else.
 
 ### Effective usage
 
